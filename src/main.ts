@@ -28,6 +28,8 @@ canvasContext.configure({
 });
 
 // Non canvas render target
+// RENDER_ATTACHMENT: Texture can be used as a render target
+// TEXTURE_BINDING: Texture can be used as a shader resource
 const massBufferTexture : GPUTexture = device.createTexture({
     size: { width: canvas.width, height: canvas.height},
     format: 'rgba16float',
@@ -51,12 +53,13 @@ const uniformDt : Float32Array = new Float32Array([UPDATE_INTERVAL / 1000.0]);
 
 const s : number = 1.0;
 const vertices : Float32Array = new Float32Array([
-    -s, -s, // Triangle 1
-    s, -s,
-    s,  s,
-    -s, -s, // Triangle 2
-    s,  s,
-    -s,  s,
+    // x, y, u, v
+    -s, -s, 0, 0, // Triangle 1
+    s, -s, 1, 0,
+    s, s, 1, 1,
+    -s, -s, 0, 0, // Triangle 2
+    s, s, 1, 1,
+    -s, s, 0, 1,
 ]);
 
 const particleStateArray : Float32Array = new Float32Array(GRID_SIZE * GRID_SIZE * 4);
