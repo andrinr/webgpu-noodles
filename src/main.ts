@@ -140,7 +140,33 @@ const forcesFragmentShader : GPUShaderModule =
 const computeShaderModule : GPUShaderModule = 
     await loadCreateShaderModule(device, "/shaders/compute.wgsl", "Compute shader");
 
-// Bind group layouts, can be used for both pipelines
+// Bind group layouts
+const massBindGroupLayout : GPUBindGroupLayout = device.createBindGroupLayout({
+    label: "Mass bind group layout",
+    entries: [{
+        binding: 0,
+        visibility: GPUShaderStage.VERTEX | GPUShaderStage.COMPUTE,
+        buffer: { type : "uniform"} // Grid uniform buffer
+    }, {
+        binding: 1, 
+        visibility: GPUShaderStage.VERTEX | GPUShaderStage.COMPUTE,
+        buffer: { type: "uniform"} // Dt uniform buffer
+    }, {
+        binding: 2,
+        visibility: GPUShaderStage.VERTEX | GPUShaderStage.COMPUTE,
+        buffer: { type: "read-only-storage"} // Particle state input buffer
+    }]
+});
+
+const potentialBindGroupLayout : GPUBindGroupLayout = device.createBindGroupLayout({
+    label : "Potential bind group layout",
+    entries: [{
+        binding: 0,
+        visibility: GPUShaderStage.FRAGMENT,
+        texture : { sampleType: "unfilterable-float" }
+    }]
+});
+
 const bindGroupLayout : GPUBindGroupLayout = device.createBindGroupLayout({
     label: "Bind group layout",
     entries: [{
