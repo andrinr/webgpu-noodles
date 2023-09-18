@@ -47,12 +47,12 @@ const uniformDt : Float32Array = new Float32Array([UPDATE_INTERVAL / 1000.0]);
 const s : number = 1.0;
 const vertices : Float32Array = new Float32Array([
     // x, y, u, v
-    -s, -s, 0, 0, // Triangle 1
-    s, -s, 1, 0,
-    s, s, 1, 1,
-    -s, -s, 0, 0, // Triangle 2
-    s, s, 1, 1,
-    -s, s, 0, 1,
+    -s, -s, // Triangle 1
+    s, -s,
+    s, s,
+    -s, -s, // Triangle 2
+    s, s,
+    -s, s,
 ]);
 
 const particleStateArray : Float32Array = new Float32Array(GRID_SIZE * GRID_SIZE * 5);
@@ -64,6 +64,12 @@ for (let i = 0; i < particleStateArray.length; i += 4) {
     particleStateArray[i + 4] = Math.random() * 0.1; // mass
 }
 
+const stencil : Float32Array = new Float32Array([
+    0.0, 1.0, 0.0,
+    1.0, -4.0, 1.0,
+    0.0, 1.0, 0.0,
+])
+
 // Create Buffers
 const sizeBuffer : GPUBuffer = device.createBuffer({
     label: "Size Uniform",
@@ -74,6 +80,12 @@ const sizeBuffer : GPUBuffer = device.createBuffer({
 const dtBuffer : GPUBuffer = device.createBuffer({
     label: "Dt Uniform",
     size: uniformDt.byteLength,
+    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+});
+
+const stencilBuffer : GPUBuffer = device.createBuffer({
+    label: "Stencil Uniform",
+    size: stencil.byteLength,
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
 });
 
@@ -94,6 +106,7 @@ const particleStateBuffers : GPUBuffer[] = ["A", "B"].map((label) => {
 // Copy data from host to device
 device.queue.writeBuffer(sizeBuffer, 0, uniformSize);
 device.queue.writeBuffer(dtBuffer, 0, uniformDt);
+device.queue.writeBuffer(stencilBuffer, 0, stencil);
 device.queue.writeBuffer(vertexBuffer, 0, vertices);
 device.queue.writeBuffer(particleStateBuffers[0], 0, particleStateArray);
 device.queue.writeBuffer(particleStateBuffers[1], 0, particleStateArray);
@@ -105,10 +118,6 @@ const vertexBufferLayout : GPUVertexBufferLayout = {
         format: "float32x2",
         offset: 0,
         shaderLocation: 0, // Position, see vertex shader
-    }, {
-        format: "float32x2",
-        offset: Float32Array.BYTES_PER_ELEMENT * 3,
-        shaderLocation: 1, // UV, see vertex shader
     }],
     stepMode : "vertex",
 };
@@ -140,9 +149,13 @@ const bindGroupLayout : GPUBindGroupLayout = device.createBindGroupLayout({
     }, {
         binding: 2,
         visibility: GPUShaderStage.VERTEX | GPUShaderStage.COMPUTE,
-        buffer: { type: "read-only-storage"} // Particle state input buffer
+        buffer: { type: "uniform"} // Stencil uniform buffer
     }, {
         binding: 3,
+        visibility: GPUShaderStage.VERTEX | GPUShaderStage.COMPUTE,
+        buffer: { type: "read-only-storage"} // Particle state input buffer
+    }, {
+        binding: 4,
         visibility: GPUShaderStage.VERTEX | GPUShaderStage.COMPUTE,
         texture : { sampleType: "unfilterable-float" } // Particle state output texture
     }]
@@ -161,9 +174,12 @@ const bindGroups : GPUBindGroup[] = [0, 1].map((id) => {
             resource: { buffer: dtBuffer }
         }, {
             binding: 2,
-            resource: { buffer: particleStateBuffers[id] }
+            resource: { buffer: stencilBuffer }
         }, {
             binding: 3,
+            resource: { buffer: particleStateBuffers[id] }
+        }, {
+            binding: 4,
             resource: textures[id].createView()
         }],
     });
@@ -249,7 +265,7 @@ function update() : void {
     
     particleRenderPass.setPipeline(renderPipeline);
     particleRenderPass.setVertexBuffer(0, vertexBuffer);
-    particleRenderPass.setBindGroup(0, bindGroups[step % 2]); // New line!
+    particleRenderPass.setBindGroup(0, bindGroups[step % 2]);
     particleRenderPass.draw(vertices.length / 2, GRID_SIZE * GRID_SIZE); // 6 vertices
     
     particleRenderPass.end();
