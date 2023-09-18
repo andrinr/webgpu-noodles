@@ -1,5 +1,5 @@
 import './style.css'
-import { loadCreateShaderModule } from './wgpu/shader';
+import { loadCreateShaderModule } from './helpers';
 
 const WORKGROUP_SIZE : number = 8;
 const GRID_SIZE : number = 256 ;
@@ -55,12 +55,13 @@ const vertices : Float32Array = new Float32Array([
     -s, s, 0, 1,
 ]);
 
-const particleStateArray : Float32Array = new Float32Array(GRID_SIZE * GRID_SIZE * 4);
+const particleStateArray : Float32Array = new Float32Array(GRID_SIZE * GRID_SIZE * 5);
 for (let i = 0; i < particleStateArray.length; i += 4) {
-    particleStateArray[i] = i / 4 % GRID_SIZE / GRID_SIZE; // x
-    particleStateArray[i + 1] = Math.floor(i / 4 / GRID_SIZE) / GRID_SIZE; // y
-    particleStateArray[i + 2] = Math.random() * 0.1 - 0.05; // vx
-    particleStateArray[i + 3] = Math.random() * 0.1 - 0.05; // vy
+    particleStateArray[i] = i / 4 % GRID_SIZE / GRID_SIZE; // x position
+    particleStateArray[i + 1] = Math.floor(i / 4 / GRID_SIZE) / GRID_SIZE; // y position
+    particleStateArray[i + 2] = Math.random() * 0.1 - 0.05; // x velocity
+    particleStateArray[i + 3] = Math.random() * 0.1 - 0.05; // y velocity
+    particleStateArray[i + 4] = Math.random() * 0.1; // mass
 }
 
 // Create Buffers
@@ -113,7 +114,7 @@ const vertexBufferLayout : GPUVertexBufferLayout = {
 };
 
 // Load & create shaders
-const vertexShader : GPUShaderModule = 
+let vertexShader : GPUShaderModule =
     await loadCreateShaderModule(device, "/shaders/vertex.wgsl", "Vertex shader");
 
 const fragmentShader : GPUShaderModule = 
@@ -220,19 +221,26 @@ function update() : void {
 
     const encoder : GPUCommandEncoder = device.createCommandEncoder();
 
-    const computePass = encoder.beginComputePass();
+    // Compute equations of motion
+    const motionPass = encoder.beginComputePass();
 
-    computePass.setPipeline(motionPipeline);
-    computePass.setBindGroup(0, bindGroups[step % 2]);
+    motionPass.setPipeline(motionPipeline);
+    motionPass.setBindGroup(0, bindGroups[step % 2]);
 
     const workgroupCount = Math.ceil(GRID_SIZE / WORKGROUP_SIZE);
-    computePass.dispatchWorkgroups(workgroupCount, workgroupCount);
+    motionPass.dispatchWorkgroups(workgroupCount, workgroupCount);
 
-    computePass.end();
+    motionPass.end();
 
+    // Render particles
     const particleRenderPass : GPURenderPassEncoder = encoder.beginRenderPass({
         colorAttachments: [{
-            view: massBufferTexture.createView(),
+            view: canvasContext.getCurrentTexture().createView(),
+            loadOp: "clear",
+            clearValue : [0.0, 0.0, 0.0, 1.0],
+            storeOp: "store",
+        }, {
+            view: textures[0].createView(),
             loadOp: "clear",
             clearValue : [0.0, 0.0, 0.0, 1.0],
             storeOp: "store",
@@ -246,18 +254,14 @@ function update() : void {
     
     particleRenderPass.end();
 
-    const forcesRenderPass : GPURenderPassEncoder = encoder.beginRenderPass({
-        colorAttachments: [{
-            view: canvasContext.getCurrentTexture().createView(),
-            loadOp: "clear",
-            clearValue : [0.0, 0.0, 0.0, 1.0],
-            storeOp: "store",
-        }]
-    });
+    // Compute potential
+    const potentialPass = encoder.beginComputePass();
 
-    forcesRenderPass.setPipeline(potentialPipeline);
-    forcesRenderPass.setVertexBuffer(0, vertexBuffer);
-    forcesRenderPass.draw(vertices.length / 2, 6);
+    potentialPass.setPipeline(potentialPipeline);
+    potentialPass.setBindGroup(0, bindGroups[step % 2]);
+
+    potentialPass.dispatchWorkgroups(workgroupCount, workgroupCount);
+    potentialPass.end();
 
     
     device.queue.submit([encoder.finish()]);
