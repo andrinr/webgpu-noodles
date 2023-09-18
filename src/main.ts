@@ -30,21 +30,14 @@ canvasContext.configure({
 // Non canvas render target
 // RENDER_ATTACHMENT: Texture can be used as a render target
 // TEXTURE_BINDING: Texture can be used as a shader resource
-const massBufferTexture : GPUTexture = device.createTexture({
-    size: { width: canvas.width, height: canvas.height},
-    format: 'rgba16float',
-    usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+const textures : GPUTexture[] = ["Mass", "Potential"].map((label) => {
+    return device.createTexture({
+        label: label + " texture",
+        size: { width: canvas.width, height: canvas.height},
+        format: 'rgba16float',
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+    });
 });
-
-const potentialBufferTexture : GPUTexture = device.createTexture({
-    size: { width: canvas.width, height: canvas.height},
-    format: 'rgba16float',
-    usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
-});
-
-// Create views
-const massBufferTextureView : GPUTextureView = massBufferTexture.createView();
-const potentialBufferTextureView : GPUTextureView = potentialBufferTexture.createView();
 
 // Initialize data on host
 const uniformSize : Float32Array = new Float32Array([GRID_SIZE, GRID_SIZE]);
@@ -89,18 +82,13 @@ const vertexBuffer : GPUBuffer = device.createBuffer({
     usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
 });
 
-const particleStateBuffers : GPUBuffer[] = [
-    device.createBuffer({
-        label: "Particle State A",
+const particleStateBuffers : GPUBuffer[] = ["A", "B"].map((label) => {
+    return device.createBuffer({
+        label: "Particle state " + label,
         size: particleStateArray.byteLength,
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-    }),
-    device.createBuffer({
-        label: "Particle State B",
-        size: particleStateArray.byteLength,
-        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-    })
-];
+    });
+});
 
 // Copy data from host to device
 device.queue.writeBuffer(sizeBuffer, 0, uniformSize);
@@ -125,24 +113,21 @@ const vertexBufferLayout : GPUVertexBufferLayout = {
 };
 
 // Load & create shaders
-const particlesVertexShader : GPUShaderModule = 
-    await loadCreateShaderModule(device, "/shaders/particles-vert.wgsl", "Vertex shader");
+const vertexShader : GPUShaderModule = 
+    await loadCreateShaderModule(device, "/shaders/vertex.wgsl", "Vertex shader");
 
-const particlesFragmentShader : GPUShaderModule = 
-    await loadCreateShaderModule(device, "/shaders/particles-frag.wgsl", "Fragment shader");
+const fragmentShader : GPUShaderModule = 
+    await loadCreateShaderModule(device, "/shaders/fragment.wgsl", "Fragment shader");
 
-const forcesVertexShader : GPUShaderModule =
-    await loadCreateShaderModule(device, "/shaders/forces-vert.wgsl", "Forces vertex shader");
+const potentialComputeShader : GPUShaderModule =
+    await loadCreateShaderModule(device, "/shaders/potential.wgsl", "Potential shader");
 
-const forcesFragmentShader : GPUShaderModule =
-    await loadCreateShaderModule(device, "/shaders/forces-frag.wgsl", "Forces fragment shader");
-
-const computeShaderModule : GPUShaderModule = 
-    await loadCreateShaderModule(device, "/shaders/compute.wgsl", "Compute shader");
+const motionComputeShader : GPUShaderModule = 
+    await loadCreateShaderModule(device, "/shaders/compute.wgsl", "Motion shader");
 
 // Bind group layouts
-const massBindGroupLayout : GPUBindGroupLayout = device.createBindGroupLayout({
-    label: "Mass bind group layout",
+const bindGroupLayout : GPUBindGroupLayout = device.createBindGroupLayout({
+    label: "Mass / Compute bind group layout",
     entries: [{
         binding: 0,
         visibility: GPUShaderStage.VERTEX | GPUShaderStage.COMPUTE,
@@ -155,46 +140,17 @@ const massBindGroupLayout : GPUBindGroupLayout = device.createBindGroupLayout({
         binding: 2,
         visibility: GPUShaderStage.VERTEX | GPUShaderStage.COMPUTE,
         buffer: { type: "read-only-storage"} // Particle state input buffer
-    }]
-});
-
-const potentialBindGroupLayout : GPUBindGroupLayout = device.createBindGroupLayout({
-    label : "Potential bind group layout",
-    entries: [{
-        binding: 0,
-        visibility: GPUShaderStage.FRAGMENT,
-        texture : { sampleType: "unfilterable-float" }
-    }]
-});
-
-const bindGroupLayout : GPUBindGroupLayout = device.createBindGroupLayout({
-    label: "Bind group layout",
-    entries: [{
-        binding: 0,
-        visibility: GPUShaderStage.VERTEX | GPUShaderStage.COMPUTE,
-        buffer: { type : "uniform"} // Grid uniform buffer
-      }, {
-        binding: 1, 
-        visibility: GPUShaderStage.VERTEX | GPUShaderStage.COMPUTE,
-        buffer: { type: "uniform"} // Dt uniform buffer
-      }, {
-        binding: 2,
-        visibility: GPUShaderStage.VERTEX | GPUShaderStage.COMPUTE,
-
+    }, {
         binding: 3,
         visibility: GPUShaderStage.VERTEX | GPUShaderStage.COMPUTE,
-        buffer: { type: "read-only-storage"} // Particle state input buffer
-      }, {
-        binding: 4,
-        visibility: GPUShaderStage.COMPUTE,
-        buffer: { type: "storage"} // Particle state output buffer
-      }]
+        texture : { sampleType: "unfilterable-float" } // Particle state output texture
+    }]
 });
 
 // Bind groups: Connect buffer to shader, can be used for both pipelines
-const bindGroups : GPUBindGroup[] = [
-    device.createBindGroup({
-        label: "Renderer bind group A",
+const bindGroups : GPUBindGroup[] = [0, 1].map((id) => {
+    return device.createBindGroup({
+        label: "Mass / Compute bind group " + ["A", "B"][id],
         layout: bindGroupLayout,
         entries: [{
             binding: 0,
@@ -204,30 +160,13 @@ const bindGroups : GPUBindGroup[] = [
             resource: { buffer: dtBuffer }
         }, {
             binding: 2,
-            resource: { buffer: particleStateBuffers[0] }
+            resource: { buffer: particleStateBuffers[id] }
         }, {
             binding: 3,
-            resource: { buffer: particleStateBuffers[1] }
+            resource: textures[id].createView()
         }],
-      }),
-    device.createBindGroup({
-        label: "Renderer bind group B",
-        layout: bindGroupLayout,
-        entries: [{
-            binding: 0,
-            resource: { buffer: sizeBuffer }
-        }, {
-            binding: 1,
-            resource: { buffer: dtBuffer }
-        }, {
-            binding: 2,
-            resource: { buffer: particleStateBuffers[1] }
-        }, {
-            binding: 3,
-            resource: { buffer: particleStateBuffers[0] }
-        }],
-    })
-]
+    });
+});
 
 // Pipeline layouts, can be used for both pipelines
 const pipelineLayout : GPUPipelineLayout = device.createPipelineLayout({
@@ -240,41 +179,36 @@ const renderPipeline : GPURenderPipeline = device.createRenderPipeline({
     label: "Renderer pipeline",
     layout: pipelineLayout,
     vertex: {
-        module: particlesVertexShader,
+        module: vertexShader,
         entryPoint: "main",
         buffers: [vertexBufferLayout]
     },
     fragment: {
-        module: particlesFragmentShader,
+        module: fragmentShader,
         entryPoint: "main", 
-        targets: [{
-            format: massBufferTexture.format
-        }]
-    }
-});
-
-const forcesPipeline : GPURenderPipeline = device.createRenderPipeline({
-    label: "Forces pipeline",
-    layout: pipelineLayout,
-    vertex: {
-        module: forcesVertexShader,
-        entryPoint: "main",
-        buffers: [vertexBufferLayout]
-    },
-    fragment: {
-        module: forcesFragmentShader,
-        entryPoint: "main",
-        targets: [{
+        targets: [
+        {
+            format: textures[0].format
+        }, {
             format: canvasFormat
         }]
     }
 });
 
-const computePipeline = device.createComputePipeline({
+const motionPipeline = device.createComputePipeline({
     label: "Compute pipeline",
     layout: pipelineLayout,
     compute: {
-        module: computeShaderModule,
+        module: motionComputeShader,
+        entryPoint: "main",
+    }
+});
+
+const potentialPipeline = device.createComputePipeline({
+    label: "Potential pipeline",
+    layout: pipelineLayout,
+    compute: {
+        module: potentialComputeShader,
         entryPoint: "main",
     }
 });
@@ -288,7 +222,7 @@ function update() : void {
 
     const computePass = encoder.beginComputePass();
 
-    computePass.setPipeline(computePipeline);
+    computePass.setPipeline(motionPipeline);
     computePass.setBindGroup(0, bindGroups[step % 2]);
 
     const workgroupCount = Math.ceil(GRID_SIZE / WORKGROUP_SIZE);
@@ -321,7 +255,7 @@ function update() : void {
         }]
     });
 
-    forcesRenderPass.setPipeline(forcesPipeline);
+    forcesRenderPass.setPipeline(potentialPipeline);
     forcesRenderPass.setVertexBuffer(0, vertexBuffer);
     forcesRenderPass.draw(vertices.length / 2, 6);
 
