@@ -1,10 +1,10 @@
 import './style.css'
 import { loadCreateShaderModule } from './helpers';
+import { vertices } from './quad';
 
 const WORKGROUP_SIZE : number = 8;
-const GRID_SIZE : number = 128;
+const GRID_SIZE : number = 256;
 const UPDATE_INTERVAL = 30;
-let step = 0; // Track how many simulation steps have been run
 
 const canvas : HTMLCanvasElement | null = document.getElementById("wgpu") as HTMLCanvasElement;
 if (!canvas) throw new Error("No canvas found.");
@@ -16,14 +16,9 @@ window.addEventListener("resize", () => {
 });
 
 // Setup
-if (!navigator.gpu) {
-    throw new Error("WebGPU not supported on this browser.");
-}
-
+if (!navigator.gpu) throw new Error("WebGPU not supported on this browser.");
 const adapter : GPUAdapter | null = await navigator.gpu.requestAdapter();
-if (!adapter) {
-    throw new Error("No appropriate GPUAdapter found.");
-}
+if (!adapter) throw new Error("No appropriate GPUAdapter found.");
 
 const device : GPUDevice = await adapter.requestDevice();
 const canvasContext : GPUCanvasContext = canvas.getContext("webgpu") as GPUCanvasContext;
@@ -50,30 +45,24 @@ const uniformSize : Float32Array = new Float32Array([GRID_SIZE, GRID_SIZE]);
 
 const uniformDt : Float32Array = new Float32Array([UPDATE_INTERVAL / 1000.0]);
 
-const s : number = 1.0;
-const vertices : Float32Array = new Float32Array([
-    // x, y, u, v
-    -s, -s, // Triangle 1
-    s, -s,
-    s, s,
-    -s, -s, // Triangle 2
-    s, s,
-    -s, s,
-]);
-
+// Note a vec3 is 16 byte aligned
+// This ordering requires less padding than the other way around
 const particleInstanceByteSize =
-    2 * 4 + // position
-    2 * 4 + // velocity
+    3 * 4 + // position
     1 * 4 + // mass
-    1 * 4; // padding (Make sure particle is 8 byte aligned)
+    3 * 4 + // velocity
+    1 * 4; // padding (Make sure particle struct is 16 byte aligned)
+const numParticles = GRID_SIZE * GRID_SIZE;
+const particleStateArray : Float32Array = new Float32Array(numParticles * particleInstanceByteSize / 4);
 
-const particleStateArray : Float32Array = new Float32Array(GRID_SIZE * GRID_SIZE * 6);
-for (let i = 0; i < particleStateArray.length; i += 6) {
+for (let i = 0; i < particleStateArray.length; i += particleInstanceByteSize / 4) {
     particleStateArray[i] = Math.random() * 2 - 1; // x position
     particleStateArray[i + 1] = Math.random() * 2 - 1; // y position
-    particleStateArray[i + 2] = 0.0; // x velocity
-    particleStateArray[i + 3] = 0.0; // y velocity
-    particleStateArray[i + 4] = 0.1; // mass
+    particleStateArray[i + 2] = Math.random() * 2 - 1; //z position
+    particleStateArray[i + 3] = Math.random() * 0.1; // mass
+    particleStateArray[i + 4] = 0.0; // x velocity
+    particleStateArray[i + 5] = 0.0; // y velocity
+    particleStateArray[i + 6] = 0.0; // z velocity
 }
 
 const stencil : Float32Array = new Float32Array([
@@ -110,7 +99,7 @@ const vertexBuffer : GPUBuffer = device.createBuffer({
 const particleStateBuffers : GPUBuffer[] = ["A", "B"].map((label) => {
     return device.createBuffer({
         label: "Particle state " + label,
-        size: particleStateArray.byteLength,
+        size: particleInstanceByteSize * numParticles,
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
 });
@@ -125,11 +114,17 @@ device.queue.writeBuffer(particleStateBuffers[1], 0, particleStateArray);
 
 // Define vertex buffer layout
 const vertexBufferLayout : GPUVertexBufferLayout = {
-    arrayStride: 8, // each vertex is 2 32-bit floats (x, y)
+    arrayStride: 20, // each vertex is 5 4-byte floats (x, y, y, u, v)
     attributes: [{ // each vertex has only a single attribute
-        format: "float32x2",
+        format: "float32x3",
         offset: 0,
         shaderLocation: 0, // Position, see vertex shader
+    },
+    {
+        format: "float32x2",
+        offset: 12,
+        shaderLocation: 1, // UV, see vertex shader
+    
     }],
     stepMode : "vertex",
 };
@@ -240,6 +235,7 @@ const motionPipeline = device.createComputePipeline({
 //     }
 // });
 
+let step = 0; // Track how many simulation steps have been run
 function update() : void {
     step++;
 
@@ -264,7 +260,12 @@ function update() : void {
             view: canvasContext.getCurrentTexture().createView(),
             // remove previous frame by 99% alpha
             loadOp: "clear",
-            clearValue : [0.0, 0.0, 0.0, 0.9],
+            clearValue : {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+                a: 0.99,
+            },
             storeOp: "store",
         }]
     });
@@ -272,7 +273,7 @@ function update() : void {
     particleRenderPass.setPipeline(renderPipeline);
     particleRenderPass.setVertexBuffer(0, vertexBuffer);
     particleRenderPass.setBindGroup(0, bindGroups[step % 2]);
-    particleRenderPass.draw(vertices.length / 2, GRID_SIZE * GRID_SIZE); // 6 vertices
+    particleRenderPass.draw(vertices.length / 5, GRID_SIZE * GRID_SIZE); // 9 vertices
     
     particleRenderPass.end();
 
