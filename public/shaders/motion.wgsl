@@ -1,31 +1,35 @@
-@group(0) @binding(0) var<uniform> grid: vec2f;
+@group(0) @binding(0) var<uniform> grid: vec2<f32>;
 @group(0) @binding(1) var<uniform> dt: f32;
 @group(0) @binding(2) var<storage> stenctil: mat3x3f;
 
 struct Particle{
-  pos: vec2f,
-  vel: vec2f,
-  mass: f32,
+  pos: vec2<f32>, // 8 bytes, 8 byte aligned
+  vel: vec2<f32>, // 8 bytes, 8 byte aligned
+  mass: f32, // 4 bytes, 4 byte aligned
 }
-@group(0) @binding(3) var<storage> particleStateIn: array<Particle>;
-@group(0) @binding(4) var<storage, read_write> particleStateOut: array<Particle>;
+
+struct Particles {
+  particles: array<Particle>,
+}
+@group(0) @binding(3) var<storage> dataIn: Particles;
+@group(0) @binding(4) var<storage, read_write> dataOut: Particles;
 
 fn particleIndex(id: vec2u) -> u32 {
   return (id.y % u32(grid.y)) * u32(grid.x) + (id.x % u32(grid.x));
 }
 
-fn kick_drift_kick(pos: vec2f, vel: vec2f, acc: vec2f) -> vec4f {
-  let vel_half = vel + acc * dt * 0.5;
-  let pos_full = pos + vel_half * dt;
+fn kick_drift_kick(particle : Particle, acc : vec2<f32>) -> Particle {
+  let vel_half = particle.vel + acc * dt * 0.5;
+  let pos_full = particle.pos + vel_half * dt;
   let vel_full = vel_half + acc * dt * 0.5;
 
-  return vec4f(pos_full, vel_full);
+  return Particle(pos_full, vel_full, particle.mass);
 }
 
-fn force(pos: vec2f, body: vec2f, mass: f32) -> vec2f {
-  let r = pos - body;
+fn force(particle : Particle, attractor : vec2<f32>) -> vec2<f32> {
+  let r = particle.pos - attractor;
   let d = length(r) + 0.001;
-  return -r * (1.0 / (d * d)) * mass;
+  return -r * (1.0 / (d * d)) * particle.mass;
 }
 
 // Make sure workgroup_size is equivalent to constant in main.ts
@@ -33,13 +37,10 @@ fn force(pos: vec2f, body: vec2f, mass: f32) -> vec2f {
 fn main(@builtin(global_invocation_id) id: vec3u) {
  
   let i = particleIndex(id.xy);
-  let particle_pos = particleStateIn[i].pos;
-  let particle_vel = particleStateIn[i].vel;
-  let particle_mass = particleStateIn[i].mass;
+  var particle = dataIn.particles[i];
 
-  let particle_acc = force(particle_pos, vec2f(0., 0.), particle_mass) * 0.004;
+  let force = force(particle, vec2f(0., 0.)) * 0.1;
+  //let force = vec2<f32>(0., 0.);
 
-  let new_state = kick_drift_kick(particle_pos, particle_vel, particle_acc);
-
-  particleStateOut[i] = Particle(new_state.xy, new_state.zw, particle_mass);
+  dataOut.particles[i] = kick_drift_kick(particle, force);
 }

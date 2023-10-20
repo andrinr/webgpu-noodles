@@ -2,7 +2,7 @@ import './style.css'
 import { loadCreateShaderModule } from './helpers';
 
 const WORKGROUP_SIZE : number = 8;
-const GRID_SIZE : number = 64;
+const GRID_SIZE : number = 128;
 const UPDATE_INTERVAL = 30;
 let step = 0; // Track how many simulation steps have been run
 
@@ -61,15 +61,19 @@ const vertices : Float32Array = new Float32Array([
     -s, s,
 ]);
 
-const particleStateArray : Float32Array = new Float32Array(GRID_SIZE * GRID_SIZE * 5);
-for (let i = 0; i < particleStateArray.length; i += 5) {
-    particleStateArray[i] = Math.random() * 2.0 - 1.0; // x position
-    particleStateArray[i + 1] = Math.random() * 2.0 - 1.0; // y position
-    particleStateArray[i + 2] = Math.random() * 0.1 - 0.05; // x velocity
-    particleStateArray[i + 3] = Math.random() * 0.1 - 0.05; // y velocity
-    particleStateArray[i + 4] = Math.random() * 0.1; // mass
+const particleInstanceByteSize =
+    2 * 4 + // position
+    2 * 4 + // velocity
+    1 * 4 + // mass
+    1 * 4; // padding (Make sure particle is 8 byte aligned)
 
-    console.log(i);
+const particleStateArray : Float32Array = new Float32Array(GRID_SIZE * GRID_SIZE * 6);
+for (let i = 0; i < particleStateArray.length; i += 6) {
+    particleStateArray[i] = Math.random() * 2 - 1; // x position
+    particleStateArray[i + 1] = Math.random() * 2 - 1; // y position
+    particleStateArray[i + 2] = 0.0; // x velocity
+    particleStateArray[i + 3] = 0.0; // y velocity
+    particleStateArray[i + 4] = 0.1; // mass
 }
 
 const stencil : Float32Array = new Float32Array([
@@ -116,7 +120,7 @@ device.queue.writeBuffer(sizeBuffer, 0, uniformSize);
 device.queue.writeBuffer(dtBuffer, 0, uniformDt);
 device.queue.writeBuffer(stencilBuffer, 0, stencil);
 device.queue.writeBuffer(vertexBuffer, 0, vertices);
-device.queue.writeBuffer(particleStateBuffers[0], 0, particleStateArray);
+//device.queue.writeBuffer(particleStateBuffers[0], 0, particleStateArray);
 device.queue.writeBuffer(particleStateBuffers[1], 0, particleStateArray);
 
 // Define vertex buffer layout
