@@ -13,6 +13,9 @@ a:visited {
 }
 
 canvas {
-  padding: 20px;
-  border: dotted 1px white;
+  width: 100vw;
+  height: 100vh;
+  position: absolute;
+  top: 0;
+  left: 0;
 }

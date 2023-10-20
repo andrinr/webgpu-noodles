@@ -2,12 +2,18 @@ import './style.css'
 import { loadCreateShaderModule } from './helpers';
 
 const WORKGROUP_SIZE : number = 8;
-const GRID_SIZE : number = 256 ;
+const GRID_SIZE : number = 64;
 const UPDATE_INTERVAL = 30;
 let step = 0; // Track how many simulation steps have been run
 
-const canvas : HTMLCanvasElement | null = document.querySelector("canvas");
+const canvas : HTMLCanvasElement | null = document.getElementById("wgpu") as HTMLCanvasElement;
 if (!canvas) throw new Error("No canvas found.");
+
+// resize event
+window.addEventListener("resize", () => {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+});
 
 // Setup
 if (!navigator.gpu) {
@@ -56,12 +62,14 @@ const vertices : Float32Array = new Float32Array([
 ]);
 
 const particleStateArray : Float32Array = new Float32Array(GRID_SIZE * GRID_SIZE * 5);
-for (let i = 0; i < particleStateArray.length; i += 4) {
-    particleStateArray[i] = i / 4 % GRID_SIZE / GRID_SIZE; // x position
-    particleStateArray[i + 1] = Math.floor(i / 4 / GRID_SIZE) / GRID_SIZE; // y position
+for (let i = 0; i < particleStateArray.length; i += 5) {
+    particleStateArray[i] = Math.random() * 2.0 - 1.0; // x position
+    particleStateArray[i + 1] = Math.random() * 2.0 - 1.0; // y position
     particleStateArray[i + 2] = Math.random() * 0.1 - 0.05; // x velocity
     particleStateArray[i + 3] = Math.random() * 0.1 - 0.05; // y velocity
     particleStateArray[i + 4] = Math.random() * 0.1; // mass
+
+    console.log(i);
 }
 
 const stencil : Float32Array = new Float32Array([
@@ -129,11 +137,11 @@ let vertexShader : GPUShaderModule =
 const fragmentShader : GPUShaderModule = 
     await loadCreateShaderModule(device, "/shaders/fragment.wgsl", "Fragment shader");
 
-const potentialComputeShader : GPUShaderModule =
-    await loadCreateShaderModule(device, "/shaders/potential.wgsl", "Potential shader");
+// const potentialComputeShader : GPUShaderModule =
+//     await loadCreateShaderModule(device, "/shaders/potential.wgsl", "Potential shader");
 
 const motionComputeShader : GPUShaderModule = 
-    await loadCreateShaderModule(device, "/shaders/compute.wgsl", "Motion shader");
+    await loadCreateShaderModule(device, "/shaders/motion.wgsl", "Motion shader");
 
 // Bind group layouts
 const bindGroupLayout : GPUBindGroupLayout = device.createBindGroupLayout({
@@ -141,7 +149,7 @@ const bindGroupLayout : GPUBindGroupLayout = device.createBindGroupLayout({
     entries: [{
         binding: 0,
         visibility: GPUShaderStage.VERTEX | GPUShaderStage.COMPUTE,
-        buffer: { type : "uniform"} // Grid uniform buffer
+        buffer: { type : "uniform"} // Size uniform buffer
     }, {
         binding: 1, 
         visibility: GPUShaderStage.VERTEX | GPUShaderStage.COMPUTE,
@@ -156,8 +164,8 @@ const bindGroupLayout : GPUBindGroupLayout = device.createBindGroupLayout({
         buffer: { type: "read-only-storage"} // Particle state input buffer
     }, {
         binding: 4,
-        visibility: GPUShaderStage.VERTEX | GPUShaderStage.COMPUTE,
-        texture : { sampleType: "unfilterable-float" } // Particle state output texture
+        visibility: GPUShaderStage.COMPUTE,
+        buffer : { type: "storage" } // Particle state output buffer
     }]
 });
 
@@ -180,7 +188,7 @@ const bindGroups : GPUBindGroup[] = [0, 1].map((id) => {
             resource: { buffer: particleStateBuffers[id] }
         }, {
             binding: 4,
-            resource: textures[id].createView()
+            resource: { buffer: particleStateBuffers[(id + 1) % 2] }
         }],
     });
 });
@@ -205,8 +213,6 @@ const renderPipeline : GPURenderPipeline = device.createRenderPipeline({
         entryPoint: "main", 
         targets: [
         {
-            format: textures[0].format
-        }, {
             format: canvasFormat
         }]
     }
@@ -221,14 +227,14 @@ const motionPipeline = device.createComputePipeline({
     }
 });
 
-const potentialPipeline = device.createComputePipeline({
-    label: "Potential pipeline",
-    layout: pipelineLayout,
-    compute: {
-        module: potentialComputeShader,
-        entryPoint: "main",
-    }
-});
+// const potentialPipeline = device.createComputePipeline({
+//     label: "Potential pipeline",
+//     layout: pipelineLayout,
+//     compute: {
+//         module: potentialComputeShader,
+//         entryPoint: "main",
+//     }
+// });
 
 function update() : void {
     step++;
@@ -252,13 +258,9 @@ function update() : void {
     const particleRenderPass : GPURenderPassEncoder = encoder.beginRenderPass({
         colorAttachments: [{
             view: canvasContext.getCurrentTexture().createView(),
+            // remove previous frame by 99% alpha
             loadOp: "clear",
-            clearValue : [0.0, 0.0, 0.0, 1.0],
-            storeOp: "store",
-        }, {
-            view: textures[0].createView(),
-            loadOp: "clear",
-            clearValue : [0.0, 0.0, 0.0, 1.0],
+            clearValue : [0.0, 0.0, 0.0, 0.9],
             storeOp: "store",
         }]
     });
@@ -270,16 +272,15 @@ function update() : void {
     
     particleRenderPass.end();
 
-    // Compute potential
-    const potentialPass = encoder.beginComputePass();
+    // // Compute potential
+    // const potentialPass = encoder.beginComputePass();
 
-    potentialPass.setPipeline(potentialPipeline);
-    potentialPass.setBindGroup(0, bindGroups[step % 2]);
+    // potentialPass.setPipeline(potentialPipeline);
+    // potentialPass.setBindGroup(0, bindGroups[step % 2]);
 
-    potentialPass.dispatchWorkgroups(workgroupCount, workgroupCount);
-    potentialPass.end();
+    // potentialPass.dispatchWorkgroups(workgroupCount, workgroupCount);
+    // potentialPass.end();
 
-    
     device.queue.submit([encoder.finish()]);
 }
 

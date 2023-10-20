@@ -12,22 +12,24 @@ struct VertexOutput {
 @group(0) @binding(0) var<uniform> grid: vec2f;
 @group(0) @binding(1) var<uniform> dt: f32;
 @group(0) @binding(2) var<storage> stenctil: mat3x3f;
-@group(0) @binding(3) var<storage> particleState: array<vec4f>;
+
+struct Particle{
+  pos: vec2f,
+  vel: vec2f,
+  mass: f32,
+}
+@group(0) @binding(3) var<storage> particleState: array<Particle>;
 
 @vertex
 fn main(
   @location(0) vertex_pos: vec2f,
   @builtin(instance_index) instance: u32) -> VertexOutput {
 
-  let particle_pos = particleState[instance].xy;
-  let particle_vel = particleState[instance].zw;
-  let particle_mass = particleState[instance].w;
-
-  let pos = particle_pos + vertex_pos * 0.003;
+  let pos = particleState[instance].pos + vertex_pos * 0.003;
 
   var output: VertexOutput;
   output.pos = vec4f(pos, 0, 1);
-  output.vel = particle_vel;
-  output.mass = particle_mass;
+  output.vel = particleState[instance].vel;
+  output.mass = particleState[instance].mass;
   return output;
 }

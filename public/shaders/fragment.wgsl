@@ -14,5 +14,5 @@ fn main(input: FragInput) -> @location(0) vec4f {
   output.mass = vec4f(input.mass, 0.0, 0.0, 1.0);
   output.color = vec4f(1.0, 1.0, 1.0, 1.0);
   
-  return output.mass;
+  return vec4f(abs(input.vel), input.mass, 1.0);
 }
