@@ -13,14 +13,15 @@ struct VertexOutput {
 
 @group(0) @binding(0) var<uniform> grid: vec2f;
 @group(0) @binding(1) var<uniform> dt: f32;
-@group(0) @binding(2) var<storage> mvp: mat4x4<f32>;
+@group(0) @binding(2) var<uniform> traceLength: u32;
+@group(0) @binding(3) var<storage> mvp: mat4x4<f32>;
 
 struct Particle{
   pos: vec3<f32>, // 8 bytes, 8 byte aligned
   mass: f32, // 4 bytes, 4 byte aligned
   vel: vec3<f32>, // 8 bytes, 8 byte aligned
 }
-@group(0) @binding(3) var<storage> particleState: array<Particle>;
+@group(0) @binding(4) var<storage> particleState: array<Particle>;
 
 @vertex
 fn main(

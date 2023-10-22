@@ -3,8 +3,10 @@ import { mat4, vec3 } from 'wgpu-matrix';
 import { loadCreateShaderModule } from './helpers';
 import { vertices } from './quad';
 
-const WORKGROUP_SIZE : number = 8;
-const GRID_SIZE : number = 64;
+const PARTICLE_WORKGROUP_SIZE : number = 8;
+const PARTICLE_GRID_SIZE : number = 32;
+const PARTICLE_TRACE_LENGTH = 20;
+
 const UPDATE_INTERVAL = 30;
 
 const canvas : HTMLCanvasElement | null = document.getElementById("wgpu") as HTMLCanvasElement;
@@ -31,40 +33,30 @@ canvasContext.configure({
     format: canvasFormat,
 });
 
-// Non canvas render target
-// RENDER_ATTACHMENT: Texture can be used as a render target
-// TEXTURE_BINDING: Texture can be used as a shader resource
-const textures : GPUTexture[] = ["Mass", "Potential"].map((label) => {
-    return device.createTexture({
-        label: label + " texture",
-        size: { width: canvas.width, height: canvas.height},
-        format: 'rgba16float',
-        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
-    });
-});
-
 // Initialize data on host
-const uniformSize : Float32Array = new Float32Array([GRID_SIZE, GRID_SIZE]);
+const uniformSize : Float32Array = new Float32Array([PARTICLE_GRID_SIZE, PARTICLE_GRID_SIZE]);
 const uniformDt : Float32Array = new Float32Array([UPDATE_INTERVAL / 1000.0]);
+const uniformTraceLength : Int32Array = new Int32Array([PARTICLE_TRACE_LENGTH]);
 
 // Note a vec3 is 16 byte aligned
 // This ordering requires less padding than the other way around
 const particleInstanceByteSize =
-    3 * 4 + // position
+    3 * 4 + // position (16 byte aligned)
     1 * 4 + // mass
     3 * 4 + // velocity
     1 * 4; // padding (Make sure particle struct is 16 byte aligned)
-const numParticles = GRID_SIZE * GRID_SIZE;
+const numParticles = PARTICLE_GRID_SIZE * PARTICLE_GRID_SIZE * PARTICLE_TRACE_LENGTH;
+// Array is initialized to 0
 const particleStateArray : Float32Array = new Float32Array(numParticles * particleInstanceByteSize / 4);
 
-for (let i = 0; i < particleStateArray.length; i += particleInstanceByteSize / 4) {
+for (let i = 0; i < particleStateArray.length; i += (particleInstanceByteSize / 4) * PARTICLE_TRACE_LENGTH) {
     particleStateArray[i] = Math.random() * 2 - 1; // x position
     particleStateArray[i + 1] = Math.random() * 2 - 1; // y position
     particleStateArray[i + 2] = Math.random() * 2 - 1; //z position
     particleStateArray[i + 3] = Math.random() * 0.1; // mass
-    particleStateArray[i + 4] = 0.0; // x velocity
-    particleStateArray[i + 5] = 0.0; // y velocity
-    particleStateArray[i + 6] = 0.0; // z velocity
+    particleStateArray[i + 4] = (Math.random() * 2 - 1) * 0.1; // x velocity (scaled down
+    particleStateArray[i + 5] = (Math.random() * 2 - 1) * 0.1; // y velocity
+    particleStateArray[i + 6] = (Math.random() * 2 - 1) * 0.1; // z velocity
 }
 
 const getMVP = (aspect : number) : Float32Array => {
@@ -92,6 +84,12 @@ const dtBuffer : GPUBuffer = device.createBuffer({
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
 });
 
+const traceLengthBuffer : GPUBuffer = device.createBuffer({
+    label: "Trace Length Uniform",
+    size: uniformTraceLength.byteLength,
+    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+});
+
 const mvpBuffer : GPUBuffer = device.createBuffer({
     label: "modelViewProjectionMatrix Uniform",
     size: mvp.byteLength,
@@ -115,6 +113,7 @@ const particleStateBuffers : GPUBuffer[] = ["A", "B"].map((label) => {
 // Copy data from host to device
 device.queue.writeBuffer(sizeBuffer, 0, uniformSize);
 device.queue.writeBuffer(dtBuffer, 0, uniformDt);
+device.queue.writeBuffer(traceLengthBuffer, 0, uniformTraceLength);
 device.queue.writeBuffer(vertexBuffer, 0, vertices);
 //device.queue.writeBuffer(particleStateBuffers[0], 0, particleStateArray);
 device.queue.writeBuffer(particleStateBuffers[1], 0, particleStateArray);
@@ -143,9 +142,6 @@ let vertexShader : GPUShaderModule =
 const fragmentShader : GPUShaderModule = 
     await loadCreateShaderModule(device, "/shaders/fragment.wgsl", "Fragment shader");
 
-// const potentialComputeShader : GPUShaderModule =
-//     await loadCreateShaderModule(device, "/shaders/potential.wgsl", "Potential shader");
-
 const motionComputeShader : GPUShaderModule = 
     await loadCreateShaderModule(device, "/shaders/motion.wgsl", "Motion shader");
 
@@ -163,13 +159,17 @@ const bindGroupLayout : GPUBindGroupLayout = device.createBindGroupLayout({
     }, {
         binding: 2,
         visibility: GPUShaderStage.VERTEX | GPUShaderStage.COMPUTE,
-        buffer: { type: "read-only-storage"} // MVP uniform buffer
+        buffer: { type: "uniform"} // Trace length uniform buffer
     }, {
         binding: 3,
         visibility: GPUShaderStage.VERTEX | GPUShaderStage.COMPUTE,
-        buffer: { type: "read-only-storage"} // Particle state input buffer
+        buffer: { type: "read-only-storage"} // MVP uniform buffer
     }, {
         binding: 4,
+        visibility: GPUShaderStage.VERTEX | GPUShaderStage.COMPUTE,
+        buffer: { type: "read-only-storage"} // Particle state input buffer
+    }, {
+        binding: 5,
         visibility: GPUShaderStage.COMPUTE,
         buffer : { type: "storage" } // Particle state output buffer
     }]
@@ -188,12 +188,15 @@ const bindGroups : GPUBindGroup[] = [0, 1].map((id) => {
             resource: { buffer: dtBuffer }
         }, {
             binding: 2,
-            resource: { buffer: mvpBuffer }
+            resource: { buffer: traceLengthBuffer }
         }, {
             binding: 3,
-            resource: { buffer: particleStateBuffers[id] }
+            resource: { buffer: mvpBuffer }
         }, {
             binding: 4,
+            resource: { buffer: particleStateBuffers[id] }
+        }, {
+            binding: 5,
             resource: { buffer: particleStateBuffers[(id + 1) % 2] }
         }],
     });
@@ -220,18 +223,18 @@ const renderPipeline : GPURenderPipeline = device.createRenderPipeline({
         targets: [
         {
             format: canvasFormat,
-            blend : {
-                color : {
-                    srcFactor: "one",
-                    dstFactor: "dst",
-                    operation: "add",
-                },
-                alpha : {
-                    srcFactor: "one",
-                    dstFactor: "one",
-                    operation: "add",
-                }
-            }
+            // blend : {
+            //     color : {
+            //         srcFactor: "one",
+            //         dstFactor: "dst",
+            //         operation: "add",
+            //     },
+            //     alpha : {
+            //         srcFactor: "one",
+            //         dstFactor: "one",
+            //         operation: "add",
+            //     }
+            // }
             
         }]
     }
@@ -245,15 +248,6 @@ const motionPipeline = device.createComputePipeline({
         entryPoint: "main",
     }
 });
-
-// const potentialPipeline = device.createComputePipeline({
-//     label: "Potential pipeline",
-//     layout: pipelineLayout,
-//     compute: {
-//         module: potentialComputeShader,
-//         entryPoint: "main",
-//     }
-// });
 
 let step = 0; // Track how many simulation steps have been run
 function update() : void {
@@ -271,7 +265,7 @@ function update() : void {
     motionPass.setPipeline(motionPipeline);
     motionPass.setBindGroup(0, bindGroups[step % 2]);
 
-    const workgroupCount = Math.ceil(GRID_SIZE / WORKGROUP_SIZE);
+    const workgroupCount = Math.ceil(PARTICLE_GRID_SIZE / PARTICLE_WORKGROUP_SIZE);
     motionPass.dispatchWorkgroups(workgroupCount, workgroupCount);
 
     motionPass.end();
@@ -295,18 +289,9 @@ function update() : void {
     particleRenderPass.setPipeline(renderPipeline);
     particleRenderPass.setVertexBuffer(0, vertexBuffer);
     particleRenderPass.setBindGroup(0, bindGroups[step % 2]);
-    particleRenderPass.draw(vertices.length / 5, GRID_SIZE * GRID_SIZE); // 9 vertices
+    particleRenderPass.draw(vertices.length / 5, PARTICLE_GRID_SIZE * PARTICLE_GRID_SIZE * PARTICLE_TRACE_LENGTH); // 5 floats per vertex (x, y, z, u, v)
     
     particleRenderPass.end();
-
-    // // Compute potential
-    // const potentialPass = encoder.beginComputePass();
-
-    // potentialPass.setPipeline(potentialPipeline);
-    // potentialPass.setBindGroup(0, bindGroups[step % 2]);
-
-    // potentialPass.dispatchWorkgroups(workgroupCount, workgroupCount);
-    // potentialPass.end();
 
     device.queue.submit([encoder.finish()]);
 }
