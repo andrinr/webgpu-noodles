@@ -13,7 +13,7 @@ struct VertexOutput {
 
 @group(0) @binding(0) var<uniform> grid: vec2f;
 @group(0) @binding(1) var<uniform> dt: f32;
-@group(0) @binding(2) var<storage> stenctil: mat3x3f;
+@group(0) @binding(2) var<storage> mvp: mat4x4<f32>;
 
 struct Particle{
   pos: vec3<f32>, // 8 bytes, 8 byte aligned
@@ -31,7 +31,7 @@ fn main(
   let pos = particleState[instance].pos + in.pos * 0.003;
 
   var output: VertexOutput;
-  output.pos = vec4f(pos, 1);
+  output.pos = mvp * vec4<f32>(pos, 1.0);
   output.uv = in.uv;
   output.vel = particleState[instance].vel;
   output.mass = particleState[instance].mass;

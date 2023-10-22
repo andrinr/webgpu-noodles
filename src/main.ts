@@ -1,18 +1,21 @@
 import './style.css'
+import { mat4, vec3 } from 'wgpu-matrix';
 import { loadCreateShaderModule } from './helpers';
 import { vertices } from './quad';
 
 const WORKGROUP_SIZE : number = 8;
-const GRID_SIZE : number = 256;
+const GRID_SIZE : number = 64;
 const UPDATE_INTERVAL = 30;
 
 const canvas : HTMLCanvasElement | null = document.getElementById("wgpu") as HTMLCanvasElement;
 if (!canvas) throw new Error("No canvas found.");
+let aspect = canvas.width / canvas.height;
 
 // resize event
 window.addEventListener("resize", () => {
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
+    aspect = canvas.width / canvas.height;
 });
 
 // Setup
@@ -42,7 +45,6 @@ const textures : GPUTexture[] = ["Mass", "Potential"].map((label) => {
 
 // Initialize data on host
 const uniformSize : Float32Array = new Float32Array([GRID_SIZE, GRID_SIZE]);
-
 const uniformDt : Float32Array = new Float32Array([UPDATE_INTERVAL / 1000.0]);
 
 // Note a vec3 is 16 byte aligned
@@ -65,11 +67,17 @@ for (let i = 0; i < particleStateArray.length; i += particleInstanceByteSize / 4
     particleStateArray[i + 6] = 0.0; // z velocity
 }
 
-const stencil : Float32Array = new Float32Array([
-    0.0, 1.0, 0.0,
-    1.0, -4.0, 1.0,
-    0.0, 1.0, 0.0,
-])
+const getMVP = (aspect : number) : Float32Array => {
+    const view = mat4.lookAt(vec3.fromValues(0, 0, 1), vec3.fromValues(0, 0, 0), vec3.fromValues(0, 1, 0)) as Float32Array;
+    const projection = mat4.perspective(50 * Math.PI / 180, aspect, 0.1, 1000.0) as Float32Array;
+    const mvp = mat4.identity() as Float32Array;
+
+    mat4.multiply(projection, view, mvp);
+
+    return mvp;
+}
+
+const mvp = getMVP(aspect);
 
 // Create Buffers
 const sizeBuffer : GPUBuffer = device.createBuffer({
@@ -84,10 +92,10 @@ const dtBuffer : GPUBuffer = device.createBuffer({
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
 });
 
-const stencilBuffer : GPUBuffer = device.createBuffer({
-    label: "Stencil Uniform",
-    size: stencil.byteLength,
-    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+const mvpBuffer : GPUBuffer = device.createBuffer({
+    label: "modelViewProjectionMatrix Uniform",
+    size: mvp.byteLength,
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
 });
 
 const vertexBuffer : GPUBuffer = device.createBuffer({
@@ -107,7 +115,6 @@ const particleStateBuffers : GPUBuffer[] = ["A", "B"].map((label) => {
 // Copy data from host to device
 device.queue.writeBuffer(sizeBuffer, 0, uniformSize);
 device.queue.writeBuffer(dtBuffer, 0, uniformDt);
-device.queue.writeBuffer(stencilBuffer, 0, stencil);
 device.queue.writeBuffer(vertexBuffer, 0, vertices);
 //device.queue.writeBuffer(particleStateBuffers[0], 0, particleStateArray);
 device.queue.writeBuffer(particleStateBuffers[1], 0, particleStateArray);
@@ -156,7 +163,7 @@ const bindGroupLayout : GPUBindGroupLayout = device.createBindGroupLayout({
     }, {
         binding: 2,
         visibility: GPUShaderStage.VERTEX | GPUShaderStage.COMPUTE,
-        buffer: { type: "uniform"} // Stencil uniform buffer
+        buffer: { type: "read-only-storage"} // MVP uniform buffer
     }, {
         binding: 3,
         visibility: GPUShaderStage.VERTEX | GPUShaderStage.COMPUTE,
@@ -181,7 +188,7 @@ const bindGroups : GPUBindGroup[] = [0, 1].map((id) => {
             resource: { buffer: dtBuffer }
         }, {
             binding: 2,
-            resource: { buffer: stencilBuffer }
+            resource: { buffer: mvpBuffer }
         }, {
             binding: 3,
             resource: { buffer: particleStateBuffers[id] }
@@ -212,7 +219,20 @@ const renderPipeline : GPURenderPipeline = device.createRenderPipeline({
         entryPoint: "main", 
         targets: [
         {
-            format: canvasFormat
+            format: canvasFormat,
+            blend : {
+                color : {
+                    srcFactor: "one",
+                    dstFactor: "dst",
+                    operation: "add",
+                },
+                alpha : {
+                    srcFactor: "one",
+                    dstFactor: "one",
+                    operation: "add",
+                }
+            }
+            
         }]
     }
 });
@@ -240,6 +260,8 @@ function update() : void {
     step++;
 
     console.log("Step " + step);
+    // update MVP
+    device.queue.writeBuffer(mvpBuffer, 0, getMVP(aspect));
 
     const encoder : GPUCommandEncoder = device.createCommandEncoder();
 

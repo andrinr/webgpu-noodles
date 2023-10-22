@@ -1,6 +1,6 @@
 @group(0) @binding(0) var<uniform> grid: vec2<f32>;
 @group(0) @binding(1) var<uniform> dt: f32;
-@group(0) @binding(2) var<storage> stenctil: mat3x3f;
+@group(0) @binding(2) var<storage> mvp: mat4x4<f32>;
 
 struct Particle{
   pos: vec3<f32>, // 8 bytes, 8 byte aligned
