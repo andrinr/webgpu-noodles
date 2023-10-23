@@ -1,7 +1,7 @@
 import './style.css'
 import { mat4, vec3 } from 'wgpu-matrix';
 import { loadCreateShaderModule } from './helpers';
-import { vertices } from './quad';
+import {getVertexData} from './column';
 
 const PARTICLE_WORKGROUP_SIZE : number = 8;
 const PARTICLE_GRID_SIZE : number = 32;
@@ -37,6 +37,7 @@ canvasContext.configure({
 const uniformSize : Float32Array = new Float32Array([PARTICLE_GRID_SIZE, PARTICLE_GRID_SIZE]);
 const uniformDt : Float32Array = new Float32Array([UPDATE_INTERVAL / 1000.0]);
 const uniformTraceLength : Int32Array = new Int32Array([PARTICLE_TRACE_LENGTH]);
+const [vertexData, indexData] = getVertexData(PARTICLE_TRACE_LENGTH);
 
 // Note a vec3 is 16 byte aligned
 // This ordering requires less padding than the other way around
@@ -44,6 +45,8 @@ const particleInstanceByteSize =
     3 * 4 + // position (16 byte aligned)
     1 * 4 + // mass
     3 * 4 + // velocity
+    1 * 4 + // lifetime
+    3 * 4 + // color 
     1 * 4; // padding (Make sure particle struct is 16 byte aligned)
 const numParticles = PARTICLE_GRID_SIZE * PARTICLE_GRID_SIZE * PARTICLE_TRACE_LENGTH;
 // Array is initialized to 0
@@ -57,6 +60,10 @@ for (let i = 0; i < particleStateArray.length; i += (particleInstanceByteSize / 
     particleStateArray[i + 4] = (Math.random() * 2 - 1) * 0.1; // x velocity (scaled down
     particleStateArray[i + 5] = (Math.random() * 2 - 1) * 0.1; // y velocity
     particleStateArray[i + 6] = (Math.random() * 2 - 1) * 0.1; // z velocity
+    particleStateArray[i + 7] = 0; // lifetime
+    particleStateArray[i + 8] = Math.random(); // r
+    particleStateArray[i + 9] = Math.random(); // g
+    particleStateArray[i + 10] = Math.random(); // b
 }
 
 const getMVP = (aspect : number) : Float32Array => {
@@ -98,8 +105,14 @@ const mvpBuffer : GPUBuffer = device.createBuffer({
 
 const vertexBuffer : GPUBuffer = device.createBuffer({
     label: "Vertices",
-    size: vertices.byteLength,
+    size: vertexData.byteLength,
     usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+});
+
+const indexBuffer : GPUBuffer = device.createBuffer({
+    label: "Indices",
+    size: indexData.byteLength,
+    usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST,
 });
 
 const particleStateBuffers : GPUBuffer[] = ["A", "B"].map((label) => {
@@ -114,23 +127,18 @@ const particleStateBuffers : GPUBuffer[] = ["A", "B"].map((label) => {
 device.queue.writeBuffer(sizeBuffer, 0, uniformSize);
 device.queue.writeBuffer(dtBuffer, 0, uniformDt);
 device.queue.writeBuffer(traceLengthBuffer, 0, uniformTraceLength);
-device.queue.writeBuffer(vertexBuffer, 0, vertices);
+device.queue.writeBuffer(vertexBuffer, 0, vertexData);
+device.queue.writeBuffer(indexBuffer, 0, indexData);
 //device.queue.writeBuffer(particleStateBuffers[0], 0, particleStateArray);
 device.queue.writeBuffer(particleStateBuffers[1], 0, particleStateArray);
 
 // Define vertex buffer layout
 const vertexBufferLayout : GPUVertexBufferLayout = {
-    arrayStride: 20, // each vertex is 5 4-byte floats (x, y, y, u, v)
-    attributes: [{ // each vertex has only a single attribute
-        format: "float32x3",
+    arrayStride: 8, // each vertex is 2 4-byte floats x, y
+    attributes: [{ // each vertex has only a single id attribute
+        format: "float32x2",
         offset: 0,
         shaderLocation: 0, // Position, see vertex shader
-    },
-    {
-        format: "float32x2",
-        offset: 12,
-        shaderLocation: 1, // UV, see vertex shader
-    
     }],
     stepMode : "vertex",
 };
@@ -220,23 +228,7 @@ const renderPipeline : GPURenderPipeline = device.createRenderPipeline({
     fragment: {
         module: fragmentShader,
         entryPoint: "main", 
-        targets: [
-        {
-            format: canvasFormat,
-            // blend : {
-            //     color : {
-            //         srcFactor: "one",
-            //         dstFactor: "dst",
-            //         operation: "add",
-            //     },
-            //     alpha : {
-            //         srcFactor: "one",
-            //         dstFactor: "one",
-            //         operation: "add",
-            //     }
-            // }
-            
-        }]
+        targets: [{format: canvasFormat}]
     }
 });
 
@@ -288,8 +280,9 @@ function update() : void {
     
     particleRenderPass.setPipeline(renderPipeline);
     particleRenderPass.setVertexBuffer(0, vertexBuffer);
+    particleRenderPass.setIndexBuffer(indexBuffer, "uint16");
     particleRenderPass.setBindGroup(0, bindGroups[step % 2]);
-    particleRenderPass.draw(vertices.length / 5, PARTICLE_GRID_SIZE * PARTICLE_GRID_SIZE * PARTICLE_TRACE_LENGTH); // 5 floats per vertex (x, y, z, u, v)
+    particleRenderPass.draw(vertexData.length / 2, PARTICLE_GRID_SIZE * PARTICLE_GRID_SIZE);
     
     particleRenderPass.end();
 

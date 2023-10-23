@@ -1,6 +1,5 @@
 struct VertexInput {
-  @location(0) pos: vec3f,
-  @location(1) uv: vec2f,
+  @location(0) pos: vec2f,
   @builtin(instance_index) instance: u32,
 };
 
@@ -20,6 +19,8 @@ struct Particle{
   pos: vec3<f32>, // 8 bytes, 8 byte aligned
   mass: f32, // 4 bytes, 4 byte aligned
   vel: vec3<f32>, // 8 bytes, 8 byte aligned
+  lifetime: f32, // 4 bytes, 4 byte aligned
+  color: vec3<f32> // 12 bytes, 4 byte aligned
 }
 @group(0) @binding(4) var<storage> particleState: array<Particle>;
 
@@ -27,14 +28,33 @@ struct Particle{
 fn main(
   in : VertexInput) -> VertexOutput {
 
-  let instance = in.instance;
+  // global id
+  let particleId = u32(in.instance / 4);
+  let particle = particleState[particleId];
 
-  let pos = particleState[instance].pos + in.pos * 0.003;
+  let tangent = normalize(cross(particle.vel, vec3<f32>(0.0, 0.0, 1.0)));
+  let bitangent = normalize(cross(particle.vel, tangent));
+
+  var offset = vec3<f32>(0.);
+  if (in.instance % 4 == 0) {
+    offset = tangent;
+  }
+  else if (in.instance % 4 == 1) {
+    offset = bitangent;
+  }
+  else if (in.instance % 4 == 2) {
+    offset = -tangent;
+  }
+  else if (in.instance % 4 == 3) {
+    offset = -bitangent;
+  }
+
+  let pos = particle.pos + offset * 20;
 
   var output: VertexOutput;
   output.pos = mvp * vec4<f32>(pos, 1.0);
-  output.uv = in.uv;
-  output.vel = particleState[instance].vel;
-  output.mass = particleState[instance].mass;
+  output.uv = vec2<f32>(0.);
+  output.vel = particle.vel;
+  output.mass = particle.mass;
   return output;
 }

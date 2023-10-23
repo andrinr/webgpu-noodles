@@ -7,6 +7,8 @@ struct Particle{
   pos: vec3<f32>, // 8 bytes, 8 byte aligned
   mass: f32, // 4 bytes, 4 byte aligned
   vel: vec3<f32>, // 8 bytes, 8 byte aligned
+  lifetime : f32, // 4 bytes, 4 byte aligned
+  color : vec3<f32> // 12 bytes, 12 byte aligned
 }
 
 struct Particles {
@@ -24,7 +26,7 @@ fn kick_drift_kick(particle : Particle, acc : vec3<f32>) -> Particle {
   let pos_full = particle.pos + vel_half * dt;
   let vel_full = vel_half + acc * dt * 0.5;
 
-  return Particle(pos_full, particle.mass, vel_full);
+  return Particle(pos_full, particle.mass, vel_full, particle.lifetime, particle.color);
 }
 
 fn gravity_force(particle : Particle, attractor : vec3<f32>) -> vec3<f32> {
@@ -45,12 +47,12 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
  
   let i = particleIndex(id.xy) * traceLength;
 
+  // secondary particle system
   for (var j = 0u; j < traceLength - 1u; j = j + 1u) {
-    
-    dataOut.particles[i + j + 1u].pos = (dataIn.particles[i + j].pos - dataIn.particles[i + j + 1u].pos) / 2.0;
+    dataOut.particles[i + j + 1u] = dataIn.particles[i + j];
   }
-  var particle = dataIn.particles[i];
 
+  var particle = dataIn.particles[i];
   let force = gravity_force(particle, vec3<f32>(0., 0., 0.)) * 0.1;
   //let force = vec2<f32>(0., 0.);
 
