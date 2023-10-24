@@ -11,10 +11,15 @@ struct VertexOutput {
   @location(2) mass: f32,
 };
 
-@group(0) @binding(0) var<uniform> grid: vec2f;
-@group(0) @binding(1) var<uniform> dt: f32;
-@group(0) @binding(2) var<uniform> traceLength: u32;
-@group(0) @binding(3) var<storage> mvp: mat4x4<f32>;
+struct Constants {
+  grid : vec2f,
+  dt : f32,
+  noodle_sections : u32,
+  noodle_rotational_elements : u32
+}
+
+@group(0) @binding(0) var<uniform> constants: Constants;
+@group(0) @binding(1) var<storage> mvp: mat4x4<f32>;
 
 struct Particle{
   pos: vec3<f32>, // 8 bytes, 8 byte aligned
@@ -23,15 +28,15 @@ struct Particle{
   lifetime: f32, // 4 bytes, 4 byte aligned
   color: vec3<f32> // 12 bytes, 4 byte aligned
 }
-@group(0) @binding(4) var<storage> particleState: array<Particle>;
+@group(0) @binding(2) var<storage> particles: array<Particle>;
 
 @vertex
 fn main(
   in : VertexInput) -> VertexOutput {
 
   // global id
-  let particleId = u32(in.instance_index * traceLength + in.vertex_index / 4);
-  let particle = particleState[particleId];
+  let particleId = u32(in.instance_index * constants.noodle_sections + in.vertex_index / 4);
+  let particle = particles[particleId];
 
   let tangent = normalize(cross(particle.vel, vec3<f32>(0.0, 1.0, 1.0)));
   let bitangent = normalize(cross(particle.vel, tangent));

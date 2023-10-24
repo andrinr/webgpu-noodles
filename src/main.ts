@@ -4,8 +4,9 @@ import { loadCreateShaderModule } from './helpers';
 import {genNoodle} from './noodle';
 
 const PARTICLE_WORKGROUP_SIZE : number = 8;
-const PARTICLE_GRID_SIZE : number = 32;
-const PARTICLE_TRACE_LENGTH = 50;
+const PARTICLE_GRID_SIZE : number = 16;
+const NOODLE_SECTIONS = 200;
+const NOODLE_ROTATIONAL_ELEMENTS = 8;
 
 const UPDATE_INTERVAL = 1000 / 60;
 
@@ -34,10 +35,11 @@ canvasContext.configure({
 });
 
 // Initialize data on host
-const uniformSize : Float32Array = new Float32Array([PARTICLE_GRID_SIZE, PARTICLE_GRID_SIZE]);
-const uniformDt : Float32Array = new Float32Array([0.05]);
-const uniformTraceLength : Int32Array = new Int32Array([PARTICLE_TRACE_LENGTH]);
-const [vertexData, indexData] = genNoodle(PARTICLE_TRACE_LENGTH);
+const constantData = new Float32Array([
+    PARTICLE_GRID_SIZE, PARTICLE_GRID_SIZE, 
+    0.05, // delta time
+    NOODLE_SECTIONS, NOODLE_ROTATIONAL_ELEMENTS]);
+const [vertexData, indexData] = genNoodle(NOODLE_SECTIONS, NOODLE_ROTATIONAL_ELEMENTS);
 
 // Note a vec3 is 16 byte aligned
 // This ordering requires less padding than the other way around
@@ -48,11 +50,11 @@ const particleInstanceByteSize =
     1 * 4 + // lifetime
     3 * 4 + // color 
     1 * 4; // padding (Make sure particle struct is 16 byte aligned)
-const numParticles = PARTICLE_GRID_SIZE * PARTICLE_GRID_SIZE * PARTICLE_TRACE_LENGTH;
+const numParticles = PARTICLE_GRID_SIZE * PARTICLE_GRID_SIZE * NOODLE_SECTIONS;
 // Array is initialized to 0
 const particleStateArray : Float32Array = new Float32Array(numParticles * particleInstanceByteSize / 4);
 
-for (let i = 0; i < particleStateArray.length; i += (particleInstanceByteSize / 4) * PARTICLE_TRACE_LENGTH) {
+for (let i = 0; i < particleStateArray.length; i += (particleInstanceByteSize / 4) * NOODLE_SECTIONS) {
     particleStateArray[i] = Math.random() * 2 - 1; // x position
     particleStateArray[i + 1] = Math.random() * 2 - 1; // y position
     particleStateArray[i + 2] = Math.random() * 2 - 1; //z position
@@ -83,21 +85,9 @@ const getMVP = (aspect : number) : Float32Array => {
 const mvp = getMVP(aspect);
 
 // Create Buffers
-const sizeBuffer : GPUBuffer = device.createBuffer({
-    label: "Size Uniform",
-    size: uniformSize.byteLength,
-    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-});
-
-const dtBuffer : GPUBuffer = device.createBuffer({
-    label: "Dt Uniform",
-    size: uniformDt.byteLength,
-    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-});
-
-const traceLengthBuffer : GPUBuffer = device.createBuffer({
-    label: "Trace Length Uniform",
-    size: uniformTraceLength.byteLength,
+const constantsBuffer : GPUBuffer = device.createBuffer({
+    label: "Constant Uniform",
+    size: constantData.byteLength,
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
 });
 
@@ -128,12 +118,9 @@ const particleStateBuffers : GPUBuffer[] = ["A", "B"].map((label) => {
 });
 
 // Copy data from host to device
-device.queue.writeBuffer(sizeBuffer, 0, uniformSize);
-device.queue.writeBuffer(dtBuffer, 0, uniformDt);
-device.queue.writeBuffer(traceLengthBuffer, 0, uniformTraceLength);
+device.queue.writeBuffer(constantsBuffer, 0, constantData);
 device.queue.writeBuffer(vertexBuffer, 0, vertexData);
 device.queue.writeBuffer(indexBuffer, 0, indexData);
-//device.queue.writeBuffer(particleStateBuffers[0], 0, particleStateArray);
 device.queue.writeBuffer(particleStateBuffers[1], 0, particleStateArray);
 
 // Define vertex buffer layout
@@ -165,14 +152,6 @@ const bindGroupLayout : GPUBindGroupLayout = device.createBindGroupLayout({
         visibility: GPUShaderStage.VERTEX | GPUShaderStage.COMPUTE,
         buffer: { type : "uniform"} // Size uniform buffer
     }, {
-        binding: 1, 
-        visibility: GPUShaderStage.VERTEX | GPUShaderStage.COMPUTE,
-        buffer: { type: "uniform"} // Dt uniform buffer
-    }, {
-        binding: 2,
-        visibility: GPUShaderStage.VERTEX | GPUShaderStage.COMPUTE,
-        buffer: { type: "uniform"} // Trace length uniform buffer
-    }, {
         binding: 3,
         visibility: GPUShaderStage.VERTEX | GPUShaderStage.COMPUTE,
         buffer: { type: "read-only-storage"} // MVP uniform buffer
@@ -194,21 +173,15 @@ const bindGroups : GPUBindGroup[] = [0, 1].map((id) => {
         layout: bindGroupLayout,
         entries: [{
             binding: 0,
-            resource: { buffer: sizeBuffer }
+            resource: { buffer: constantsBuffer }
         }, {
             binding: 1,
-            resource: { buffer: dtBuffer }
-        }, {
-            binding: 2,
-            resource: { buffer: traceLengthBuffer }
-        }, {
-            binding: 3,
             resource: { buffer: mvpBuffer }
         }, {
-            binding: 4,
+            binding: 2,
             resource: { buffer: particleStateBuffers[id] }
         }, {
-            binding: 5,
+            binding: 3,
             resource: { buffer: particleStateBuffers[(id + 1) % 2] }
         }],
     });
@@ -219,12 +192,7 @@ const pipelineLayout : GPUPipelineLayout = device.createPipelineLayout({
     label: "Pipeline Layout",
     bindGroupLayouts: [ bindGroupLayout ],
 });
- 
 
-const primitiveState: GPUPrimitiveState = {
-    topology: 'triangle-list',
-    cullMode: 'back',
-};
 
 // Pipelines
 const renderPipeline : GPURenderPipeline = device.createRenderPipeline({
@@ -240,12 +208,6 @@ const renderPipeline : GPURenderPipeline = device.createRenderPipeline({
         entryPoint: "main", 
         targets: [{format: canvasFormat}]
     },
-    // depthStencil: {
-    //     depthWriteEnabled: true,
-    //     depthCompare: 'less',
-    //     format: 'depth24plus-stencil8',
-    // },
-    //primitive : primitiveState,
 });
 
 const motionPipeline = device.createComputePipeline({
