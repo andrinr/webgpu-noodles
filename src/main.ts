@@ -5,8 +5,9 @@ import {genNoodle} from './noodle';
 
 const PARTICLE_WORKGROUP_SIZE : number = 8;
 const PARTICLE_GRID_SIZE : number = 16;
-const NOODLE_SECTIONS = 200;
+const NOODLE_SECTIONS = 20;
 const NOODLE_ROTATIONAL_ELEMENTS = 8;
+const NOODLE_RADIUS = 0.1;
 
 const UPDATE_INTERVAL = 1000 / 60;
 
@@ -35,10 +36,14 @@ canvasContext.configure({
 });
 
 // Initialize data on host
-const constantData = new Float32Array([
-    PARTICLE_GRID_SIZE, PARTICLE_GRID_SIZE, 
-    0.05, // delta time
-    NOODLE_SECTIONS, NOODLE_ROTATIONAL_ELEMENTS]);
+const params = new Float32Array([
+    PARTICLE_GRID_SIZE,
+    PARTICLE_GRID_SIZE,
+    0.01,
+    NOODLE_SECTIONS,
+    NOODLE_ROTATIONAL_ELEMENTS,
+    NOODLE_RADIUS]);
+
 const [vertexData, indexData] = genNoodle(NOODLE_SECTIONS, NOODLE_ROTATIONAL_ELEMENTS);
 
 // Note a vec3 is 16 byte aligned
@@ -54,7 +59,7 @@ const numParticles = PARTICLE_GRID_SIZE * PARTICLE_GRID_SIZE * NOODLE_SECTIONS;
 // Array is initialized to 0
 const particleStateArray : Float32Array = new Float32Array(numParticles * particleInstanceByteSize / 4);
 
-for (let i = 0; i < particleStateArray.length; i += (particleInstanceByteSize / 4) * NOODLE_SECTIONS) {
+for (let i = 0; i < particleStateArray.length; i += (particleInstanceByteSize / 4) ) {
     particleStateArray[i] = Math.random() * 2 - 1; // x position
     particleStateArray[i + 1] = Math.random() * 2 - 1; // y position
     particleStateArray[i + 2] = Math.random() * 2 - 1; //z position
@@ -85,9 +90,9 @@ const getMVP = (aspect : number) : Float32Array => {
 const mvp = getMVP(aspect);
 
 // Create Buffers
-const constantsBuffer : GPUBuffer = device.createBuffer({
-    label: "Constant Uniform",
-    size: constantData.byteLength,
+const paramsBuffer : GPUBuffer = device.createBuffer({
+    label: "Params Uniform",
+    size: params.byteLength,
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
 });
 
@@ -118,7 +123,7 @@ const particleStateBuffers : GPUBuffer[] = ["A", "B"].map((label) => {
 });
 
 // Copy data from host to device
-device.queue.writeBuffer(constantsBuffer, 0, constantData);
+device.queue.writeBuffer(paramsBuffer, 0, params);
 device.queue.writeBuffer(vertexBuffer, 0, vertexData);
 device.queue.writeBuffer(indexBuffer, 0, indexData);
 device.queue.writeBuffer(particleStateBuffers[1], 0, particleStateArray);
@@ -150,17 +155,17 @@ const bindGroupLayout : GPUBindGroupLayout = device.createBindGroupLayout({
     entries: [{
         binding: 0,
         visibility: GPUShaderStage.VERTEX | GPUShaderStage.COMPUTE,
-        buffer: { type : "uniform"} // Size uniform buffer
+        buffer: { type : "uniform"} // Params buffer
     }, {
-        binding: 3,
+        binding: 1,
         visibility: GPUShaderStage.VERTEX | GPUShaderStage.COMPUTE,
         buffer: { type: "read-only-storage"} // MVP uniform buffer
     }, {
-        binding: 4,
+        binding: 2,
         visibility: GPUShaderStage.VERTEX | GPUShaderStage.COMPUTE,
         buffer: { type: "read-only-storage"} // Particle state input buffer
     }, {
-        binding: 5,
+        binding: 3,
         visibility: GPUShaderStage.COMPUTE,
         buffer : { type: "storage" } // Particle state output buffer
     }]
@@ -173,7 +178,7 @@ const bindGroups : GPUBindGroup[] = [0, 1].map((id) => {
         layout: bindGroupLayout,
         entries: [{
             binding: 0,
-            resource: { buffer: constantsBuffer }
+            resource: { buffer: paramsBuffer }
         }, {
             binding: 1,
             resource: { buffer: mvpBuffer }
@@ -192,7 +197,6 @@ const pipelineLayout : GPUPipelineLayout = device.createPipelineLayout({
     label: "Pipeline Layout",
     bindGroupLayouts: [ bindGroupLayout ],
 });
-
 
 // Pipelines
 const renderPipeline : GPURenderPipeline = device.createRenderPipeline({

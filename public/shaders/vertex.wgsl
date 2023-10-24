@@ -6,16 +6,17 @@ struct VertexInput {
 
 struct VertexOutput {
   @builtin(position) pos: vec4f,
-  @location(0) uv: vec2f,
-  @location(1) vel: vec3f,
-  @location(2) mass: f32,
+  @location(0) position: vec3f,
+  @location(1) normal: vec3f,
+  @location(2) vel: vec3f,
 };
 
 struct Constants {
   grid : vec2f,
   dt : f32,
-  noodle_sections : u32,
-  noodle_rotational_elements : u32
+  noodle_sections : f32,
+  noodle_rotational_elements : f32,
+  noodle_radius : f32,
 }
 
 @group(0) @binding(0) var<uniform> constants: Constants;
@@ -31,38 +32,30 @@ struct Particle{
 @group(0) @binding(2) var<storage> particles: array<Particle>;
 
 @vertex
-fn main(
-  in : VertexInput) -> VertexOutput {
+fn main(in : VertexInput) -> VertexOutput {
+
+  let sections = u32(constants.noodle_sections);
+  let elements = u32(constants.noodle_rotational_elements);
 
   // global id
-  let particleId = u32(in.instance_index * constants.noodle_sections + in.vertex_index / 4);
+  let particleId = u32(in.instance_index * sections + in.vertex_index / elements);
   let particle = particles[particleId];
 
   let tangent = normalize(cross(particle.vel, vec3<f32>(0.0, 1.0, 1.0)));
   let bitangent = normalize(cross(particle.vel, tangent));
 
-  var offset = vec3<f32>(0.);
-  let index = in.vertex_index;
-  if (in.vertex_index % 4 == 0) {
-    offset = tangent;
-  }
-  else if (in.vertex_index % 4 == 1) {
-    offset = -bitangent;
-  }
-  else if (in.vertex_index % 4 == 2) {
-    offset = -tangent;
-  }
-  else if (in.vertex_index % 4 == 3) {
-    offset = bitangent;
-  }
+  let pointOnCircle = f32(in.vertex_index) / f32(elements) * 2.0 * 3.14159265359;
 
-  let pos = particle.pos + offset * 0.03;
+  let normal = normalize(cos(pointOnCircle) * tangent + sin(pointOnCircle) * bitangent);
+
+  let pos = particle.pos + normal * constants.noodle_radius;
   //let pos = vec3f(rand() - 0.5, rand() - 0.5, rand() - 0.5) * 10.;
 
   var output: VertexOutput;
   output.pos = mvp * vec4<f32>(pos, 1.0);
-  output.uv = vec2<f32>(0.);
   output.vel = particle.vel;
-  output.mass = particle.mass;
+  output.normal = normal;
+  output.position = pos;
+
   return output;
 }

@@ -1,8 +1,9 @@
 struct Constants {
   grid : vec2f,
   dt : f32,
-  noodle_sections : u32,
-  noodle_rotational_elements : u32
+  noodle_sections : f32,
+  noodle_rotational_elements : f32,
+  noodle_radius : f32,
 }
 
 @group(0) @binding(0) var<uniform> constants: Constants;
@@ -26,6 +27,10 @@ fn particleIndex(id: vec2u) -> u32 {
   return (id.y % u32(constants.grid.y)) * u32(constants.grid.x) + (id.x % u32(constants.grid.x));
 }
 
+fn damping(particle : Particle) -> Particle {
+  return Particle(particle.pos, particle.mass, particle.vel * 0.9999, particle.lifetime, particle.color);
+}
+
 fn kick_drift_kick(particle : Particle, acc : vec3<f32>) -> Particle {
   let vel_half = particle.vel + acc * constants.dt * 0.5;
   let pos_full = particle.pos + vel_half * constants.dt;
@@ -35,29 +40,38 @@ fn kick_drift_kick(particle : Particle, acc : vec3<f32>) -> Particle {
 }
 
 fn gravity_force(particle : Particle, attractor : vec3<f32>) -> vec3<f32> {
-  let r = particle.pos - attractor;
+  let r = attractor - particle.pos;
   let d = length(r) + 0.001;
-  return -r * (1.0 / (d * d)) * particle.mass;
+  return normalize(r) * (1.0 / (d)) * particle.mass;
 }
 
 fn rubber_force(particle : Particle, attractor : vec3<f32>) -> vec3<f32> {
-  let r = particle.pos - attractor; 
+  let r = attractor - particle.pos;
   let d = length(r) + 0.001;
-  return r * d * particle.mass;
+  return normalize(r) * d * d * particle.mass;
 }
 
 // Make sure workgroup_size is equivalent to constant in main.ts
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) id: vec3u) {
+
+  let sections = u32(constants.noodle_sections);
  
-  let i = particleIndex(id.xy) * constants.noodle_sections;
+  let i = particleIndex(id.xy) * sections;
+  
+  let particle = dataIn.particles[i];
 
   // secondary particle system
-  for (var j = 0u; j < constants.noodle_sections - 1u; j = j + 1u) {
-    dataOut.particles[i + j + 1u] = dataIn.particles[i + j];
+  for (var j = 0u; j < sections - 1u; j = j + 1u) {
+    // let force = rubber_force(dataIn.particles[i + j + 1u], dataIn.particles[i + j].pos) * 0.01;
+    // dataOut.particles[i + j + 1u] = kick_drift_kick(dataIn.particles[i + j + 1u], force);
+    //dataOut.particles[i + j + 1u] = damping(dataIn.particles[i + j + 1u]);
+    let r = dataIn.particles[i + j ].pos - dataIn.particles[i + j + 1u].pos;
+    dataOut.particles[i + j + 1u].pos = dataIn.particles[i + j + 1u].pos + r / 30.0;
+    dataOut.particles[i + j + 1u].vel = normalize(r) * length(particle.vel);
   }
 
-  var particle = dataIn.particles[i];
+
   let force = gravity_force(particle, vec3<f32>(0., 0., 0.));
   //let force = vec2<f32>(0., 0.);
 
