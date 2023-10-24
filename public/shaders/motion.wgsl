@@ -53,7 +53,7 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
   }
 
   var particle = dataIn.particles[i];
-  let force = gravity_force(particle, vec3<f32>(0., 0., 0.)) * 0.1;
+  let force = gravity_force(particle, vec3<f32>(0., 0., 0.));
   //let force = vec2<f32>(0., 0.);
 
   dataOut.particles[i] = kick_drift_kick(particle, force);

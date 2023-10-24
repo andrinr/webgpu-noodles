@@ -1,13 +1,13 @@
 import './style.css'
 import { mat4, vec3 } from 'wgpu-matrix';
 import { loadCreateShaderModule } from './helpers';
-import {getVertexData} from './column';
+import {genNoodle} from './noodle';
 
 const PARTICLE_WORKGROUP_SIZE : number = 8;
 const PARTICLE_GRID_SIZE : number = 32;
-const PARTICLE_TRACE_LENGTH = 20;
+const PARTICLE_TRACE_LENGTH = 50;
 
-const UPDATE_INTERVAL = 30;
+const UPDATE_INTERVAL = 1000 / 60;
 
 const canvas : HTMLCanvasElement | null = document.getElementById("wgpu") as HTMLCanvasElement;
 if (!canvas) throw new Error("No canvas found.");
@@ -35,9 +35,9 @@ canvasContext.configure({
 
 // Initialize data on host
 const uniformSize : Float32Array = new Float32Array([PARTICLE_GRID_SIZE, PARTICLE_GRID_SIZE]);
-const uniformDt : Float32Array = new Float32Array([UPDATE_INTERVAL / 1000.0]);
+const uniformDt : Float32Array = new Float32Array([0.05]);
 const uniformTraceLength : Int32Array = new Int32Array([PARTICLE_TRACE_LENGTH]);
-const [vertexData, indexData] = getVertexData(PARTICLE_TRACE_LENGTH);
+const [vertexData, indexData] = genNoodle(PARTICLE_TRACE_LENGTH);
 
 // Note a vec3 is 16 byte aligned
 // This ordering requires less padding than the other way around
@@ -67,7 +67,11 @@ for (let i = 0; i < particleStateArray.length; i += (particleInstanceByteSize / 
 }
 
 const getMVP = (aspect : number) : Float32Array => {
-    const view = mat4.lookAt(vec3.fromValues(0, 0, 1), vec3.fromValues(0, 0, 0), vec3.fromValues(0, 1, 0)) as Float32Array;
+    const eye = vec3.fromValues(0, 0, 3);
+    const target = vec3.fromValues(0, 0, 0);
+    const up = vec3.fromValues(0, 1, 0);
+
+    const view = mat4.lookAt(eye, target, up) as Float32Array;
     const projection = mat4.perspective(50 * Math.PI / 180, aspect, 0.1, 1000.0) as Float32Array;
     const mvp = mat4.identity() as Float32Array;
 
@@ -134,8 +138,8 @@ device.queue.writeBuffer(particleStateBuffers[1], 0, particleStateArray);
 
 // Define vertex buffer layout
 const vertexBufferLayout : GPUVertexBufferLayout = {
-    arrayStride: 8, // each vertex is 2 4-byte floats x, y
-    attributes: [{ // each vertex has only a single id attribute
+    arrayStride: Float32Array.BYTES_PER_ELEMENT * 2,
+    attributes: [{ // 2d position dummy data
         format: "float32x2",
         offset: 0,
         shaderLocation: 0, // Position, see vertex shader
@@ -215,6 +219,12 @@ const pipelineLayout : GPUPipelineLayout = device.createPipelineLayout({
     label: "Pipeline Layout",
     bindGroupLayouts: [ bindGroupLayout ],
 });
+ 
+
+const primitiveState: GPUPrimitiveState = {
+    topology: 'triangle-list',
+    cullMode: 'back',
+};
 
 // Pipelines
 const renderPipeline : GPURenderPipeline = device.createRenderPipeline({
@@ -223,13 +233,19 @@ const renderPipeline : GPURenderPipeline = device.createRenderPipeline({
     vertex: {
         module: vertexShader,
         entryPoint: "main",
-        buffers: [vertexBufferLayout]
+        buffers: [vertexBufferLayout],
     },
     fragment: {
         module: fragmentShader,
         entryPoint: "main", 
         targets: [{format: canvasFormat}]
-    }
+    },
+    // depthStencil: {
+    //     depthWriteEnabled: true,
+    //     depthCompare: 'less',
+    //     format: 'depth24plus-stencil8',
+    // },
+    //primitive : primitiveState,
 });
 
 const motionPipeline = device.createComputePipeline({
@@ -241,7 +257,7 @@ const motionPipeline = device.createComputePipeline({
     }
 });
 
-let step = 0; // Track how many simulation steps have been run
+let step = 0;
 function update() : void {
     step++;
 
@@ -252,39 +268,45 @@ function update() : void {
     const encoder : GPUCommandEncoder = device.createCommandEncoder();
 
     // Compute equations of motion
-    const motionPass = encoder.beginComputePass();
+    {
+        const motionPass = encoder.beginComputePass();
 
-    motionPass.setPipeline(motionPipeline);
-    motionPass.setBindGroup(0, bindGroups[step % 2]);
+        motionPass.setPipeline(motionPipeline);
+        motionPass.setBindGroup(0, bindGroups[step % 2]);
 
-    const workgroupCount = Math.ceil(PARTICLE_GRID_SIZE / PARTICLE_WORKGROUP_SIZE);
-    motionPass.dispatchWorkgroups(workgroupCount, workgroupCount);
+        const workgroupCount = Math.ceil(PARTICLE_GRID_SIZE / PARTICLE_WORKGROUP_SIZE);
+        motionPass.dispatchWorkgroups(workgroupCount, workgroupCount);
 
-    motionPass.end();
+        motionPass.end();
+    }
+
 
     // Render particles
-    const particleRenderPass : GPURenderPassEncoder = encoder.beginRenderPass({
-        colorAttachments: [{
-            view: canvasContext.getCurrentTexture().createView(),
-            // remove previous frame by 99% alpha
-            loadOp: "clear",
-            clearValue : {
-                r: 0.0,
-                g: 0.0,
-                b: 0.0,
-                a: 0.99,
-            },
-            storeOp: "store",
-        }]
-    });
-    
-    particleRenderPass.setPipeline(renderPipeline);
-    particleRenderPass.setVertexBuffer(0, vertexBuffer);
-    particleRenderPass.setIndexBuffer(indexBuffer, "uint16");
-    particleRenderPass.setBindGroup(0, bindGroups[step % 2]);
-    particleRenderPass.draw(vertexData.length / 2, PARTICLE_GRID_SIZE * PARTICLE_GRID_SIZE);
-    
-    particleRenderPass.end();
+    {
+        const particleRenderPass : GPURenderPassEncoder = encoder.beginRenderPass({
+            colorAttachments: [{
+                view: canvasContext.getCurrentTexture().createView(),
+                // remove previous frame by 99% alpha
+                loadOp: "clear",
+                clearValue : {
+                    r: 0.0,
+                    g: 0.0,
+                    b: 0.0,
+                    a: 1.0,
+                },
+                storeOp: "store",
+            }]
+        });
+        
+        particleRenderPass.setPipeline(renderPipeline);
+        particleRenderPass.setBindGroup(0, bindGroups[step % 2]);
+        particleRenderPass.setVertexBuffer(0, vertexBuffer);
+        particleRenderPass.setIndexBuffer(indexBuffer, "uint16");
+        //particleRenderPass.draw(vertexData.length / 2, PARTICLE_GRID_SIZE * PARTICLE_GRID_SIZE);
+        particleRenderPass.drawIndexed(indexData.length, PARTICLE_GRID_SIZE * PARTICLE_GRID_SIZE);
+        
+        particleRenderPass.end();
+    }
 
     device.queue.submit([encoder.finish()]);
 }
