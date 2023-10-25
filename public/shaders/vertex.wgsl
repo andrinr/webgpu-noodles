@@ -9,6 +9,7 @@ struct VertexOutput {
   @location(0) position: vec3f,
   @location(1) normal: vec3f,
   @location(2) vel: vec3f,
+  @location(3) uv: vec2f,
 };
 
 struct Constants {
@@ -31,6 +32,8 @@ struct Particle{
 }
 @group(0) @binding(2) var<storage> particles: array<Particle>;
 
+const twoPi = 6.28318530718;
+
 @vertex
 fn main(in : VertexInput) -> VertexOutput {
 
@@ -38,17 +41,22 @@ fn main(in : VertexInput) -> VertexOutput {
   let elements = u32(constants.noodle_rotational_elements);
 
   // global id
+  let noodle = in.instance_index / sections;
+  let section = in.vertex_index / elements;
   let particleId = u32(in.instance_index * sections + in.vertex_index / elements);
   let particle = particles[particleId];
 
-  let tangent = normalize(cross(particle.vel, vec3<f32>(0.0, 1.0, 1.0)));
+
+  let tangent = normalize(cross(particle.vel, vec3<f32>(1.0, 0, 0)));
   let bitangent = normalize(cross(particle.vel, tangent));
 
-  let pointOnCircle = f32(in.vertex_index) / f32(elements) * 2.0 * 3.14159265359;
+  let pointOnCircle = f32(in.vertex_index % elements) / f32(elements);
 
-  let normal = normalize(cos(pointOnCircle) * tangent + sin(pointOnCircle) * bitangent);
+  let uv = vec2(pointOnCircle, f32(section) / f32(sections));
 
-  let pos = particle.pos + normal * constants.noodle_radius;
+  let normal = normalize(cos(pointOnCircle * twoPi) * tangent + sin(pointOnCircle * twoPi) * bitangent);
+
+  let pos = particle.pos - normal * constants.noodle_radius;
   //let pos = vec3f(rand() - 0.5, rand() - 0.5, rand() - 0.5) * 10.;
 
   var output: VertexOutput;
@@ -56,6 +64,7 @@ fn main(in : VertexInput) -> VertexOutput {
   output.vel = particle.vel;
   output.normal = normal;
   output.position = pos;
+  output.uv = uv;
 
   return output;
 }

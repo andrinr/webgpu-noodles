@@ -67,13 +67,12 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
     // dataOut.particles[i + j + 1u] = kick_drift_kick(dataIn.particles[i + j + 1u], force);
     //dataOut.particles[i + j + 1u] = damping(dataIn.particles[i + j + 1u]);
     let r = dataIn.particles[i + j ].pos - dataIn.particles[i + j + 1u].pos;
-    dataOut.particles[i + j + 1u].pos = dataIn.particles[i + j + 1u].pos + r / 30.0;
+    dataOut.particles[i + j + 1u].pos = dataIn.particles[i + j + 1u].pos + r / 40.0;
     dataOut.particles[i + j + 1u].vel = normalize(r) * length(particle.vel);
   }
 
 
-  let force = gravity_force(particle, vec3<f32>(0., 0., 0.));
-  //let force = vec2<f32>(0., 0.);
+  let force = gravity_force(particle, vec3<f32>(0., 0., 0.)) * 0.1;
 
   dataOut.particles[i] = kick_drift_kick(particle, force);
 }

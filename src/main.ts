@@ -5,14 +5,16 @@ import {genNoodle} from './noodle';
 
 const PARTICLE_WORKGROUP_SIZE : number = 8;
 const PARTICLE_GRID_SIZE : number = 16;
-const NOODLE_SECTIONS = 20;
-const NOODLE_ROTATIONAL_ELEMENTS = 8;
-const NOODLE_RADIUS = 0.1;
+const NOODLE_SECTIONS = 10;
+const NOODLE_ROTATIONAL_ELEMENTS = 6;
+const NOODLE_RADIUS = 0.01;
 
 const UPDATE_INTERVAL = 1000 / 60;
 
 const canvas : HTMLCanvasElement | null = document.getElementById("wgpu") as HTMLCanvasElement;
 if (!canvas) throw new Error("No canvas found.");
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
 let aspect = canvas.width / canvas.height;
 
 // resize event
@@ -55,7 +57,7 @@ const particleInstanceByteSize =
     1 * 4 + // lifetime
     3 * 4 + // color 
     1 * 4; // padding (Make sure particle struct is 16 byte aligned)
-const numParticles = PARTICLE_GRID_SIZE * PARTICLE_GRID_SIZE * NOODLE_SECTIONS;
+const numParticles = PARTICLE_GRID_SIZE * PARTICLE_GRID_SIZE * (NOODLE_SECTIONS);
 // Array is initialized to 0
 const particleStateArray : Float32Array = new Float32Array(numParticles * particleInstanceByteSize / 4);
 
@@ -74,17 +76,14 @@ for (let i = 0; i < particleStateArray.length; i += (particleInstanceByteSize / 
 }
 
 const getMVP = (aspect : number) : Float32Array => {
-    const eye = vec3.fromValues(0, 0, 3);
+    const eye = vec3.fromValues(0, 0, -3);
     const target = vec3.fromValues(0, 0, 0);
     const up = vec3.fromValues(0, 1, 0);
 
     const view = mat4.lookAt(eye, target, up) as Float32Array;
-    const projection = mat4.perspective(50 * Math.PI / 180, aspect, 0.1, 1000.0) as Float32Array;
-    const mvp = mat4.identity() as Float32Array;
+    const projection = mat4.perspective(45 * Math.PI / 180, aspect, 0.1, 1000.0) as Float32Array;
 
-    mat4.multiply(projection, view, mvp);
-
-    return mvp;
+    return mat4.multiply(projection, view) as Float32Array;
 }
 
 const mvp = getMVP(aspect);
@@ -211,6 +210,11 @@ const renderPipeline : GPURenderPipeline = device.createRenderPipeline({
         module: fragmentShader,
         entryPoint: "main", 
         targets: [{format: canvasFormat}]
+    },
+    primitive: {
+        topology: 'triangle-list',
+        // No backface culling so that we can see the back of the cube.
+        cullMode: 'back'
     },
 });
 
