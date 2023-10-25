@@ -4,9 +4,9 @@ import { loadCreateShaderModule } from './helpers';
 import {genNoodle} from './noodle';
 
 const PARTICLE_WORKGROUP_SIZE : number = 8;
-const PARTICLE_GRID_SIZE : number = 16;
-const NOODLE_SECTIONS = 10;
-const NOODLE_ROTATIONAL_ELEMENTS = 6;
+const PARTICLE_GRID_SIZE : number = 32;
+const NOODLE_SECTIONS = 30;
+const NOODLE_ROTATIONAL_ELEMENTS = 4;
 const NOODLE_RADIUS = 0.01;
 
 const UPDATE_INTERVAL = 1000 / 60;

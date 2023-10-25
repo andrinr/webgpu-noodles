@@ -46,7 +46,6 @@ fn main(in : VertexInput) -> VertexOutput {
   let particleId = u32(in.instance_index * sections + in.vertex_index / elements);
   let particle = particles[particleId];
 
-
   let tangent = normalize(cross(particle.vel, vec3<f32>(1.0, 0, 0)));
   let bitangent = normalize(cross(particle.vel, tangent));
 
@@ -57,7 +56,6 @@ fn main(in : VertexInput) -> VertexOutput {
   let normal = normalize(cos(pointOnCircle * twoPi) * tangent + sin(pointOnCircle * twoPi) * bitangent);
 
   let pos = particle.pos - normal * constants.noodle_radius;
-  //let pos = vec3f(rand() - 0.5, rand() - 0.5, rand() - 0.5) * 10.;
 
   var output: VertexOutput;
   output.pos = mvp * vec4<f32>(pos, 1.0);
